@@ -56,8 +56,10 @@ along with the explicit rules below; Gemini applies them and returns the recomme
   a configured completed-hours rule that isn't met, or no remaining capacity.
 - **MANUAL_REVIEW** if there is no confirmed failure but something critical could not be
   verified: the UoS prerequisite page was unreachable/unparseable, the course wasn't
-  found on the page, or the student attempted the required prerequisite course but
-  whether it counts as "passed" cannot yet be determined (see grade-policy note below).
+  found on the page, its prerequisite is a nested/parenthesized expression, a required
+  course has a grade outside the approved grade policy (see below), the student's
+  completed hours are missing/invalid while a completed-hours rule applies, or the
+  Section capacity record is invalid (missing or negative values).
 - **APPROVE** only when every applicable check is verified and satisfied.
 
 Python still computes the per-check `verified`/`satisfied` booleans deterministically
@@ -78,35 +80,49 @@ that keeps the real relationship:
 | `1501211 or 1501341` | `OR` | `[[1501211], [1501341]]` |
 | `Pre/Co: 1430110` | `SINGLE` + `is_pre_or_co=true` | `[[1430110]]` |
 | `1501215 and Junior Standing` | `SINGLE` | `[[1501215]]`, with `additional_text_conditions: ["Junior Standing"]` |
+| `1501341, (1501246 or 1501247)` | not parsed -- `verified: false` | nested/parenthesized expressions are not supported and route to `MANUAL_REVIEW` |
 
 Text conditions like "Junior Standing" are **never** converted into a credit-hour number
 -- they are surfaced as-is in `additional_text_conditions` for transparency and are not
 auto-evaluated (the local completed-hours knowledge base's `required_standing` field is
 the intended place for that, as a separate, explicitly-configured rule).
 
-### Open issue: passing-grade policy (not yet resolved)
+### Grade policy (prerequisite evaluation)
 
-There is currently **no approved rule** for which `Takes.Grade` values count as a passing
-grade. Per instruction, this prototype does not guess one. Behavior until a rule is
-approved:
+`app/knowledge_base/grade_policy.json` holds the approved grade policy, loaded by
+`app/tools/grade_policy.py` and used by the deterministic prerequisite evaluation:
 
-- If a required prerequisite course **never appears** in the student's transcript at all,
-  that is treated as a confirmed failure (`prerequisite_satisfied: false`) -- no grade
-  interpretation is needed to know an unattempted course wasn't passed.
-- If the required course **does appear** in the transcript, satisfaction is left
-  unresolved (`prerequisite_satisfied: null`, `needs_manual_review: true`) until a grade
-  policy is approved.
-
-The first time `DATABASE_URL` is configured, sample `Takes.Grade` values will be
-inspected and reported before any grade-based logic is implemented.
+- **Passing grades:** `A`, `B+`, `B`, `C+`, `C`, `D+`, `D` -- a required course counts as
+  passed if any recorded attempt has one of these grades.
+- **Failing grades:** `F`, `WF`, `FA`.
+- **NULL grade** (course in progress / not completed) does **not** count as a passed
+  prerequisite.
+- A required course that **never appears** in the transcript is not passed.
+- Any grade value **outside the policy** (e.g. `W`, `I`) is never guessed: the
+  prerequisite is left unresolved (`prerequisite_satisfied: null`,
+  `needs_manual_review: true`) and routes to `MANUAL_REVIEW`.
 
 ### Completed-hours: not-applicable vs. not-satisfied
 
 - Course **is** in `course_completed_hours.json` -> evaluated normally
-  (`applicable: true, requirement_found: true, satisfied: true|false`).
+  (`applicable: true, requirement_found: true, satisfied: true|false`, where satisfied
+  means completed hours >= `minimum_completed_hours`). Course IDs are compared as strings,
+  since `Course_ID` is a text column in the database.
+- Course **is** in the file but the student's `Completed_Hours` is NULL/invalid ->
+  `applicable: true, satisfied: null`, which routes to `MANUAL_REVIEW`.
 - Course **is not** in the file -> `applicable: false, requirement_found: false,
   satisfied: null`. This is not a rejection and not an automatic manual review; it means
   no special rule is configured for that course.
+
+Currently configured: `1501215` Data Structures (31 hours) and `1501394` Junior Project in
+CS (65 hours). These are marked `development_rule`.
+
+### Capacity
+
+`maximum_allowed_capacity = Total_Capacity + Additional_Capacity`, and additional capacity
+is available when `Current_Capacity < maximum_allowed_capacity`. A capacity record with a
+missing, non-integer, or negative value is treated as invalid (`satisfied: null`) and
+routes to `MANUAL_REVIEW`.
 
 ## Project layout
 
@@ -117,17 +133,21 @@ app/
   exceptions.py              Typed errors for every failure mode
   services/
     database.py               Read-only SQLAlchemy engine + generic Course lookup
-    gemini.py                 Gemini client wrapper (explanation only)
+    gemini.py                 Final decision layer: APPROVE/REJECT/MANUAL_REVIEW + explanation from the verified evidence
   tools/
     request_tools.py          get_raise_capacity_request()
     student_tools.py          get_student_academic_info(), get_student_transcript()
     prerequisite_tools.py     get_course_prerequisites() [UoS scraper], evaluate_prerequisite_status()
+    grade_policy.py           classify_grade() using grade_policy.json
     hours_tools.py            get_completed_hours_requirement(), evaluate_completed_hours()
     capacity_tools.py         get_section_capacity(), evaluate_capacity()
   knowledge_base/
     course_completed_hours.json
+    grade_policy.json
 tests/
-  test_agent.py               CLI-style test harness
+  test_eligibility.py         Automated tests (pytest; no database, Gemini, or network needed)
+  test_agent.py               CLI-style harness for a real request (needs .env)
+pytest.ini
 ```
 
 ## Configuring `.env`
@@ -140,10 +160,10 @@ GEMINI_MODEL=gemini-3.6-flash
 DATABASE_URL=
 ```
 
-- `DATABASE_URL` must use the **psycopg 3** SQLAlchemy dialect prefix:
-  `postgresql+psycopg://user:password@host:port/dbname`. A plain `postgresql://` URL
-  copied from Supabase will make SQLAlchemy try to use `psycopg2` (not installed here) --
-  add the `+psycopg` part.
+- `DATABASE_URL` is the Supabase PostgreSQL connection string. A plain `postgresql://` or
+  `postgres://` URL is automatically rewritten to the **psycopg 3** dialect
+  (`postgresql+psycopg://`), so it can be pasted as-is.
+- `GEMINI_MODEL` defaults to `gemini-3.6-flash` if unset.
 - Never commit `.env` (it's already in `.gitignore`). Never paste real credentials into
   chat, issues, or commit messages.
 
@@ -168,6 +188,15 @@ python tests/test_agent.py <request_id>
 Both print each stage of the pipeline (request, course, prerequisite check, completed-hours
 check, capacity check) followed by the Gemini-generated reasoning, the final
 recommendation, and the full JSON result.
+
+## Running the tests
+
+```
+python -m pytest
+```
+
+The automated tests use fakes for the database, the UoS page, and Gemini, so they run
+from a fresh clone without a `.env`, credentials, network access, or Gemini quota.
 
 ## Read-only guarantee
 

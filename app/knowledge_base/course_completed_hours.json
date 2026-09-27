@@ -1,11 +1,10 @@
 {
   "courses": [
     {
-      "course_id": 1501279,
+      "course_id": 1501215,
       "course_name": "Data Structures",
       "minimum_completed_hours": 31,
       "required_standing": "Second Year",
-      
       "status": "development_rule"
     },
     {

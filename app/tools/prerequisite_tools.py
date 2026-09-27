@@ -170,6 +170,21 @@ def get_course_prerequisites(course_id: int) -> dict:
             "error": f"Course {course_id} was not found in the UoS Degree Requirements tables.",
         }
 
+    if "(" in entry["raw_prerequisite_text"] or ")" in entry["raw_prerequisite_text"]:
+        # The flat OR/AND split cannot represent grouping such as
+        # "1501341, (1501246 or 1501247)" and would mis-read it, so never claim a result.
+        return {
+            "course_id": course_id,
+            "course_name": entry["course_name"],
+            "raw_prerequisite_text": entry["raw_prerequisite_text"],
+            "source_url": config.UOS_CS_DEGREE_URL,
+            "verified": False,
+            "error": (
+                f"Nested prerequisite expression not supported: {entry['raw_prerequisite_text']!r} "
+                f"for course {course_id} cannot be evaluated automatically."
+            ),
+        }
+
     parsed = entry["parsed"]
     return {
         "course_id": course_id,

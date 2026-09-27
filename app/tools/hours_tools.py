@@ -28,7 +28,9 @@ def _load_knowledge_base() -> dict:
 def get_completed_hours_requirement(course_id: int) -> dict:
     data = _load_knowledge_base()
     for course in data["courses"]:
-        if course.get("course_id") == course_id:
+        # Course_ID is a text column in the database while the knowledge base stores ints,
+        # so compare as strings -- otherwise the rule silently never matches.
+        if str(course.get("course_id")) == str(course_id):
             return {
                 "course_id": course_id,
                 "found": True,
@@ -40,9 +42,17 @@ def get_completed_hours_requirement(course_id: int) -> dict:
     return {"course_id": course_id, "found": False}
 
 
-def evaluate_completed_hours(student_completed_hours: int, requirement: dict) -> dict:
+def _is_valid_hours(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def evaluate_completed_hours(student_completed_hours: int | None, requirement: dict) -> dict:
     """Per approved design: a course absent from the knowledge base is NOT APPLICABLE,
-    never a rejection and never an automatic manual review."""
+    never a rejection and never an automatic manual review.
+
+    If a rule applies but the student's completed hours (nullable in the Student table) or
+    the configured threshold is missing/invalid, the result is unresolved (satisfied=None),
+    which routes to MANUAL_REVIEW -- never a guessed pass or fail."""
     if not requirement.get("found"):
         return {
             "applicable": False,
@@ -53,6 +63,20 @@ def evaluate_completed_hours(student_completed_hours: int, requirement: dict) ->
         }
 
     required_hours = requirement["minimum_completed_hours"]
+    if not _is_valid_hours(student_completed_hours) or not _is_valid_hours(required_hours):
+        return {
+            "applicable": True,
+            "requirement_found": True,
+            "satisfied": None,
+            "student_completed_hours": student_completed_hours,
+            "required_hours": required_hours,
+            "required_standing": requirement.get("required_standing"),
+            "error": (
+                "Student completed hours or the configured required hours is missing or invalid; "
+                "cannot evaluate the completed-hours requirement."
+            ),
+        }
+
     return {
         "applicable": True,
         "requirement_found": True,

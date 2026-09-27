@@ -4,3 +4,4 @@ SQLAlchemy>=2.0
 psycopg[binary]
 requests
 beautifulsoup4
+pytest

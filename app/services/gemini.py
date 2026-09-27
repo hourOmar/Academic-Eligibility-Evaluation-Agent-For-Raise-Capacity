@@ -87,6 +87,9 @@ for example:
 - checks.prerequisite.verified is false (could not be verified from the UoS source)
 - checks.prerequisite.satisfied is null (unresolved -- e.g. a grade value outside the
   approved policy, or a text-only condition with no course ID)
+- checks.completed_hours.applicable is true AND checks.completed_hours.satisfied is null
+  (the student's completed hours or the configured threshold is missing/invalid)
+- checks.capacity.satisfied is null (the Section capacity record is invalid)
 - any other required input is missing or ambiguous
 
 CRITICAL RULE: missing or unverifiable evidence is NEVER the same as a failed requirement.

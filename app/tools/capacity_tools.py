@@ -37,10 +37,25 @@ def get_section_capacity(section_id: str, course_id: int, term: int) -> dict:
 
 
 def evaluate_capacity(capacity_data: dict) -> dict:
-    """All values below come directly from the Section row; nothing here is estimated."""
+    """All values below come directly from the Section row; nothing here is estimated.
+
+    A missing, non-integer, or negative value makes the record invalid: the result is
+    unresolved (satisfied=None), which routes to MANUAL_REVIEW rather than APPROVE/REJECT."""
     current_capacity = capacity_data["Current_Capacity"]
     total_capacity = capacity_data["Total_Capacity"]
     additional_capacity = capacity_data["Additional_Capacity"]
+
+    values = (current_capacity, total_capacity, additional_capacity)
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in values):
+        return {
+            "current_capacity": current_capacity,
+            "total_capacity": total_capacity,
+            "additional_capacity": additional_capacity,
+            "maximum_allowed_capacity": None,
+            "remaining_raise_capacity": None,
+            "satisfied": None,
+            "error": "Section capacity record is missing a value or contains a negative/non-integer value.",
+        }
 
     maximum_allowed_capacity = total_capacity + additional_capacity
     remaining_raise_capacity = maximum_allowed_capacity - current_capacity
