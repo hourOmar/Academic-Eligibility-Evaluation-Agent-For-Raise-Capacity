@@ -1,0 +1,6 @@
+google-genai
+python-dotenv
+SQLAlchemy>=2.0
+psycopg[binary]
+requests
+beautifulsoup4

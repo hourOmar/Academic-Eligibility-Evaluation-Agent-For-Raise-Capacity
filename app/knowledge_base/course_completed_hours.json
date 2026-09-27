@@ -1,0 +1,19 @@
+{
+  "courses": [
+    {
+      "course_id": 1501279,
+      "course_name": "Data Structures",
+      "minimum_completed_hours": 31,
+      "required_standing": "Second Year",
+      
+      "status": "development_rule"
+    },
+    {
+      "course_id": 1501394,
+      "course_name": "Junior Project in CS",
+      "minimum_completed_hours": 65,
+      "required_standing": "Junior",
+      "status": "development_rule"
+    }
+  ]
+}

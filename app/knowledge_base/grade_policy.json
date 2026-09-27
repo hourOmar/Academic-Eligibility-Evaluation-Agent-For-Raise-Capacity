@@ -1,0 +1,7 @@
+{
+  "passing_grades": ["A", "B+", "B", "C+", "C", "D+", "D"],
+  "failing_grades": ["F", "WF", "FA"],
+  "null_grade_meaning": "NULL means the course is still in progress / not completed and must NOT satisfy a prerequisite.",
+  "source": "University of Sharjah undergraduate grading policy (minimum passing grade for Bachelor's students = D), confirmed by project owner",
+  "status": "approved"
+}
