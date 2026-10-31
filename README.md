@@ -124,17 +124,68 @@ is available when `Current_Capacity < maximum_allowed_capacity`. A capacity reco
 missing, non-integer, or negative value is treated as invalid (`satisfied: null`) and
 routes to `MANUAL_REVIEW`.
 
+## Rejection Explanation Agent and combined pipeline
+
+A second, separate agent (`app/rejection_agent.py`) runs **only when the eligibility
+recommendation is `REJECT`**. It never changes the recommendation: it works on a deep copy
+of the eligibility result and returns its own, separate block.
+
+1. **Confirmed failures only.** Failures are read deterministically from
+   `evidence.checks` -- prerequisite `verified=true` and `satisfied=false`, completed hours
+   `applicable=true` and `satisfied=false`, capacity `satisfied=false`. Unresolved evidence
+   (`satisfied=null`, or an unverified prerequisite) is listed separately and is never used
+   as a reason.
+2. **Keywords.** Each confirmed failure maps to a keyword in
+   `app/knowledge_base/rejection_keywords.json` (`prerequisite_not_completed`,
+   `prerequisite_not_passed`, `prerequisite_options_not_satisfied`,
+   `completed_hours_insufficient`, `no_remaining_capacity`). Prerequisite keywords follow
+   the UoS relationship type: for SINGLE/AND every listed course is required; for OR a
+   single `prerequisite_options_not_satisfied` reason states that any one option is
+   enough. A completed-hours threshold whose status in `course_completed_hours.json` is
+   not `approved` (currently both rules are `development_rule`) is worded as "the minimum
+   applied in this evaluation", never as university policy, and the result is flagged
+   for administrative review with a note to confirm the rule.
+3. **Gemini wording (separate call).** `app/services/rejection_gemini.py` reuses the same
+   Gemini client and sends only the confirmed failures, their verified evidence, and the
+   permitted keywords (no student name or ID). It returns `formal`, `concise`, and
+   `supportive` suggestions.
+4. **Validation (all-or-nothing).** `app/tools/explanation_generator.py` rejects Gemini's
+   output if any of the three explanations is empty, cites an unknown keyword or omits a
+   verified one, contains a number not in the evidence, discusses a requirement that did
+   not fail, claims an official rejection or mentions AI/Gemini, or contains the student's
+   name/ID. If any one fails -- or Gemini is unavailable -- all three are replaced by
+   deterministic template explanations from the knowledge base.
+5. If the recommendation is `REJECT` but no confirmed failure exists, the status is
+   `explanation_unavailable` and the result is flagged for administrative review.
+
+`app/pipeline.py` routes between the two agents:
+
+| Recommendation | Pipeline behaviour |
+|---|---|
+| `APPROVE` | Eligibility result only. If a deterministic check nevertheless shows a confirmed failure, a `consistency_warnings` entry is added and `administrative_review_required` is set -- the recommendation is not changed. |
+| `REJECT` | Eligibility result + `rejection_explanation` (status `generated`, `fallback`, or `explanation_unavailable`). |
+| `MANUAL_REVIEW` | Eligibility result + `unresolved_evidence`. No rejection explanation is generated. |
+
+The explanations are suggestions only; authorized administrative staff make the final
+decision.
+
 ## Project layout
 
 ```
 app/
   config.py                  Env config + UoS URL
-  agent.py                   Fixed workflow + CLI entry point
+  agent.py                   Academic Eligibility Evaluation Agent: fixed workflow + CLI entry point
+  rejection_agent.py         Rejection Explanation Agent (REJECT only) + CLI entry point
+  pipeline.py                Combined pipeline: eligibility -> (REJECT) rejection explanation
   exceptions.py              Typed errors for every failure mode
   services/
     database.py               Read-only SQLAlchemy engine + generic Course lookup
     gemini.py                 Final decision layer: APPROVE/REJECT/MANUAL_REVIEW + explanation from the verified evidence
+    rejection_gemini.py       Separate Gemini call: formal/concise/supportive rejection wording
   tools/
+    rejection_input_tools.py  validate/load an eligibility result
+    rejection_keyword_tools.py identify_confirmed_failures(), identify_unresolved_checks()
+    explanation_generator.py  Gemini output validation + deterministic fallback explanations
     request_tools.py          get_raise_capacity_request()
     student_tools.py          get_student_academic_info(), get_student_transcript()
     prerequisite_tools.py     get_course_prerequisites() [UoS scraper], evaluate_prerequisite_status()
@@ -144,8 +195,11 @@ app/
   knowledge_base/
     course_completed_hours.json
     grade_policy.json
+    rejection_keywords.json   Closed rejection keyword vocabulary + fallback templates
 tests/
   test_eligibility.py         Automated tests (pytest; no database, Gemini, or network needed)
+  test_rejection_agent.py     Rejection Explanation Agent tests (fake Gemini)
+  test_pipeline.py            Combined pipeline tests (all data sources and both Gemini calls faked)
   test_agent.py               CLI-style harness for a real request (needs .env)
 pytest.ini
 ```
@@ -157,6 +211,7 @@ Copy `.env.example` to `.env` and fill in:
 ```
 GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3.6-flash
+GEMINI_FALLBACK_MODELS=
 DATABASE_URL=
 ```
 
@@ -164,6 +219,14 @@ DATABASE_URL=
   `postgres://` URL is automatically rewritten to the **psycopg 3** dialect
   (`postgresql+psycopg://`), so it can be pasted as-is.
 - `GEMINI_MODEL` defaults to `gemini-3.6-flash` if unset.
+- `GEMINI_FALLBACK_MODELS` (optional, comma-separated) is the same mechanism as the Raise
+  Capacity Prioritization Agent: both Gemini calls (eligibility decision and rejection
+  wording) try `[GEMINI_MODEL, *GEMINI_FALLBACK_MODELS]` in order with the identical
+  request, moving to the next model **only** on a temporary 503 or 429 error. Any other
+  error stops immediately. An unparseable response from a model that did answer is not a
+  fallback trigger. If every model fails, eligibility returns `MANUAL_REVIEW` and the
+  rejection agent uses its deterministic explanations. Both results record
+  `gemini_model_used` and `gemini_models_attempted`. Empty means no fallback.
 - Never commit `.env` (it's already in `.gitignore`). Never paste real credentials into
   chat, issues, or commit messages.
 
@@ -189,13 +252,25 @@ Both print each stage of the pipeline (request, course, prerequisite check, comp
 check, capacity check) followed by the Gemini-generated reasoning, the final
 recommendation, and the full JSON result.
 
+Combined pipeline (both agents):
+
+```
+python -m app.pipeline <request_id>            # add --no-json to hide the JSON result
+```
+
+Rejection Explanation Agent alone, on a Request ID or on saved eligibility output:
+
+```
+python -m app.rejection_agent <request_id | path-to-saved-output>
+```
+
 ## Running the tests
 
 ```
 python -m pytest
 ```
 
-The automated tests use fakes for the database, the UoS page, and Gemini, so they run
+The automated tests use fakes for the database, the UoS page, and both Gemini calls, so they run
 from a fresh clone without a `.env`, credentials, network access, or Gemini quota.
 
 ## Read-only guarantee

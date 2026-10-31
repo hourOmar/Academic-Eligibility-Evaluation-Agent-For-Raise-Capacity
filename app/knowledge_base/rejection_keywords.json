@@ -1,0 +1,75 @@
+{
+  "note": "Closed vocabulary of Raise Capacity rejection keywords used by the Rejection Explanation Agent. Every keyword is detected deterministically by Python from a CONFIRMED failure in the Academic Eligibility Evaluation Agent's evidence (satisfied is false; for the prerequisite, also verified is true). Unresolved or unverifiable evidence (satisfied is null / verified is false) never maps to a keyword. Gemini may only reference these ids and can never create new ones. 'topic_terms' are used to reject generated explanations that discuss a requirement that did not fail. Prerequisite keywords follow the UoS relationship type: SINGLE/AND use prerequisite_not_completed / prerequisite_not_passed (every listed course is required); OR uses prerequisite_options_not_satisfied (any one option is enough). completed_hours_insufficient uses its 'development_rule' variant unless the rule's status in course_completed_hours.json is 'approved', so a development-only threshold is never presented as confirmed university policy.",
+  "keywords": {
+    "prerequisite_not_completed": {
+      "requirement": "prerequisite",
+      "label": "Prerequisite course not completed",
+      "policy_basis": "The course prerequisite published on the official University of Sharjah degree page must be satisfied before registering in the course.",
+      "plain_reason": "There is no record of the required prerequisite course(s) {course_ids} in your transcript.",
+      "concise_reason": "prerequisite course(s) {course_ids} not completed",
+      "supportive_guidance": "The prerequisite course(s) {course_ids} need to be completed with a passing grade before this requirement is met."
+    },
+    "prerequisite_not_passed": {
+      "requirement": "prerequisite",
+      "label": "Prerequisite course not passed",
+      "policy_basis": "A prerequisite course counts as satisfied only when a passing grade (A, B+, B, C+, C, D+ or D) is recorded under the approved grade policy.",
+      "plain_reason": "No passing grade is recorded for the required prerequisite course(s) {course_ids}; the recorded attempt has a failing grade or is still in progress.",
+      "concise_reason": "no passing grade recorded for prerequisite course(s) {course_ids}",
+      "supportive_guidance": "A passing grade needs to be recorded for the prerequisite course(s) {course_ids} before this requirement is met."
+    },
+    "prerequisite_options_not_satisfied": {
+      "requirement": "prerequisite",
+      "label": "No prerequisite option satisfied",
+      "policy_basis": "The course prerequisite published on the official University of Sharjah degree page lists alternative options; completing any one option with a passing grade (A, B+, B, C+, C, D+ or D) satisfies it.",
+      "plain_reason": "The prerequisite for this course can be satisfied by any one of the following options: {options}. None of these options has been completed with a passing grade: {status_details}.",
+      "concise_reason": "none of the prerequisite options ({options}) completed with a passing grade",
+      "supportive_guidance": "Completing any one of these prerequisite options with a passing grade would satisfy this requirement.",
+      "status_never_attempted": "there is no record of course(s) {course_ids} in your transcript",
+      "status_not_passed": "no passing grade is recorded for course(s) {course_ids}"
+    },
+    "completed_hours_insufficient": {
+      "requirement": "completed_hours",
+      "label": "Insufficient completed credit hours",
+      "policy_basis": "This course requires a minimum number of completed credit hours under approved University of Sharjah policy.",
+      "plain_reason": "You have completed {student_completed_hours} credit hours, while this course requires at least {required_hours} completed credit hours.",
+      "concise_reason": "{student_completed_hours} completed credit hours, minimum required is {required_hours}",
+      "supportive_guidance": "At least {required_hours} completed credit hours are needed before this requirement is met.",
+      "variants": {
+        "development_rule": {
+          "label": "Completed credit hours below the evaluation criterion",
+          "policy_basis": "A minimum completed-credit-hour threshold for this course is configured in the project's local knowledge base as a development rule. It has not been confirmed as official University of Sharjah policy.",
+          "plain_reason": "You have completed {student_completed_hours} credit hours, which is below the minimum of {required_hours} completed credit hours applied for this course in this evaluation.",
+          "concise_reason": "{student_completed_hours} completed credit hours, below the minimum of {required_hours} applied in this evaluation",
+          "supportive_guidance": "Under the criterion applied in this evaluation, at least {required_hours} completed credit hours would be needed."
+        }
+      }
+    },
+    "no_remaining_capacity": {
+      "requirement": "capacity",
+      "label": "No remaining raise capacity",
+      "policy_basis": "A Raise Capacity request can only be accommodated while the section's current enrollment is below its maximum allowed capacity (total capacity plus additional capacity).",
+      "plain_reason": "Section {section_id} is at {current_capacity} against its maximum allowed capacity of {maximum_allowed_capacity}, so no additional raise capacity remains.",
+      "concise_reason": "Section {section_id} has no remaining capacity (maximum allowed capacity {maximum_allowed_capacity})",
+      "supportive_guidance": ""
+    }
+  },
+  "topic_terms": {
+    "prerequisite": [
+      "prerequisite"
+    ],
+    "completed_hours": [
+      "credit hour",
+      "completed hours",
+      "completed-hour"
+    ],
+    "capacity": [
+      "capacity",
+      "seat"
+    ]
+  },
+  "fallback_templates": {
+    "formal": "The Raise Capacity request for course {course_id} ({course_name}), Section {section_id}, does not meet the following academic condition(s) evaluated for this request. {plain_reasons}",
+    "concise": "Condition(s) not met: {concise_reasons}.",
+    "supportive": "Thank you for your Raise Capacity request for {course_name}. After reviewing the academic conditions for this request, it does not currently meet the following condition(s). {plain_reasons} {supportive_guidance}"
+  }
+}

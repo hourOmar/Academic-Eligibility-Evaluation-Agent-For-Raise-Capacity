@@ -107,6 +107,8 @@ def evaluate_raise_capacity_request(request_id: str) -> dict:
         "checks": decision["checks"],
         "gemini_status": decision["status"],
         "gemini_error": decision["error"],
+        "gemini_model_used": decision.get("model_used"),
+        "gemini_models_attempted": decision.get("models_attempted", []),
     }
 
 
@@ -149,7 +151,7 @@ def evaluate_raise_capacity_request(request_id: str) -> dict:
 #     print(f"Gemini capacity explanation: {gemini_checks.get('capacity')}")
 
 
-def _print_report(result: dict) -> None:
+def _print_report(result: dict, show_json: bool = True) -> None:
     evidence = result["evidence"]
     student = evidence["student"]
     course = evidence["course"]
@@ -267,6 +269,10 @@ def _print_report(result: dict) -> None:
     gemini_error = result["gemini_error"]
 
     print(f"\n  {'Gemini status':<27}: {gemini_status}")
+    print(f"  {'Gemini model used':<27}: {result.get('gemini_model_used')}")
+    attempted = result.get("gemini_models_attempted") or []
+    if attempted:
+        print(f"  {'Gemini models attempted':<27}: {', '.join(a['model'] for a in attempted)}")
 
     if gemini_error:
         print(f"  {'Gemini error':<27}: {gemini_error}")
@@ -288,6 +294,9 @@ def _print_report(result: dict) -> None:
     # ------------------------------------------------------------------
     # FULL JSON RESULT
     # ------------------------------------------------------------------
+    if not show_json:  # the combined pipeline (app/pipeline.py) prints its own JSON
+        return
+
     print("\n" + "-" * 70)
     print("FULL JSON RESULT")
     print("-" * 70)

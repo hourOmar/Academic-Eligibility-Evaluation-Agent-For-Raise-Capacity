@@ -23,12 +23,18 @@ from typing import Literal
 
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 from pydantic import BaseModel
 
 from app import config
-from app.exceptions import GeminiUnavailableError
+from app.exceptions import GeminiRequestFailedError, GeminiUnavailableError
 
 _client = None
+
+# Same fallback rule as the Raise Capacity Prioritization Agent: only a temporary Gemini
+# error (503 service-unavailable, 429 rate-limit/resource-exhausted) moves on to the next
+# configured model. Anything else stops immediately so a real problem is never masked.
+_RETRYABLE_STATUS_CODES = {429, 503}
 
 
 class CheckExplanations(BaseModel):
@@ -50,6 +56,46 @@ def _get_client():
             raise GeminiUnavailableError("GEMINI_API_KEY is not configured. Set it in .env.")
         _client = genai.Client(api_key=config.GEMINI_API_KEY)
     return _client
+
+
+def _is_retryable_gemini_error(exc: Exception) -> bool:
+    return isinstance(exc, APIError) and exc.code in _RETRYABLE_STATUS_CODES
+
+
+def models_to_try() -> list[str]:
+    """[GEMINI_MODEL, *GEMINI_FALLBACK_MODELS], in order, without duplicates."""
+    return list(dict.fromkeys([config.GEMINI_MODEL, *config.GEMINI_FALLBACK_MODELS]))
+
+
+def generate_with_model_fallback(client, contents, generation_config):
+    """Sends the IDENTICAL request (same contents and config -- only model= varies) to
+    each configured model in order. Moves to the next model only on a retryable error
+    (429/503). Returns (response, model_used, models_attempted); raises
+    GeminiRequestFailedError on a non-retryable error or when every model fails.
+
+    models_attempted is a list of {"model": ..., "error": str | None}; error is None for
+    the model that answered. Response validation is NOT a fallback trigger: a model that
+    answered with an unusable response is handled by the caller."""
+    models = models_to_try()
+    models_attempted: list[dict] = []
+    for model in models:
+        try:
+            response = client.models.generate_content(model=model, contents=contents, config=generation_config)
+        except Exception as exc:  # noqa: BLE001 - classified below; non-retryable errors stop the loop
+            models_attempted.append({"model": model, "error": f"{type(exc).__name__}: {exc}"})
+            if _is_retryable_gemini_error(exc):
+                continue
+            raise GeminiRequestFailedError(
+                f"Gemini API call failed on model {model!r}: {exc}", models_attempted
+            ) from exc
+        models_attempted.append({"model": model, "error": None})
+        return response, model, models_attempted
+
+    details = "; ".join(f"{a['model']}: {a['error']}" for a in models_attempted)
+    raise GeminiRequestFailedError(
+        f"Gemini API call failed on all configured models ({', '.join(models)}): {details}",
+        models_attempted,
+    )
 
 
 def _build_prompt(evidence_package: dict) -> str:
@@ -113,12 +159,13 @@ Produce the structured response:
 
 
 def get_gemini_decision(evidence_package: dict) -> dict:
+    models_attempted: list[dict] = []
     try:
         client = _get_client()
-        response = client.models.generate_content(
-            model=config.GEMINI_MODEL,
-            contents=_build_prompt(evidence_package),
-            config=types.GenerateContentConfig(
+        response, model_used, models_attempted = generate_with_model_fallback(
+            client,
+            _build_prompt(evidence_package),
+            types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=EligibilityDecision,
             ),
@@ -137,14 +184,18 @@ def get_gemini_decision(evidence_package: dict) -> dict:
                 "capacity": parsed.checks.capacity,
             },
             "error": None,
+            "model_used": model_used,
+            "models_attempted": models_attempted,
         }
+    except GeminiRequestFailedError as exc:
+        return _unavailable_result(evidence_package, str(exc), exc.models_attempted)
     except GeminiUnavailableError as exc:
-        return _unavailable_result(evidence_package, str(exc))
+        return _unavailable_result(evidence_package, str(exc), models_attempted)
     except Exception as exc:  # noqa: BLE001 - any Gemini/client failure must degrade to MANUAL_REVIEW, never crash
-        return _unavailable_result(evidence_package, str(exc))
+        return _unavailable_result(evidence_package, str(exc), models_attempted)
 
 
-def _unavailable_result(evidence_package: dict, error: str) -> dict:
+def _unavailable_result(evidence_package: dict, error: str, models_attempted: list[dict] | None = None) -> dict:
     """Gemini IS the decision-maker in this architecture. If it cannot be reached, there is
     no deterministic fallback recommendation -- Python does not compute one. The only safe
     answer is MANUAL_REVIEW: evidence was collected, but no automated decision was produced."""
@@ -163,4 +214,6 @@ def _unavailable_result(evidence_package: dict, error: str) -> dict:
             "capacity": f"Not reviewed by Gemini. Evidence collected: {checks.get('capacity')}",
         },
         "error": error,
+        "model_used": None,
+        "models_attempted": models_attempted or [],
     }

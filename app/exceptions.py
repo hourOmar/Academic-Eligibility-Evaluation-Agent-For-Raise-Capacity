@@ -41,3 +41,18 @@ class PrerequisiteSourceUnavailableError(AgentError):
 
 class GeminiUnavailableError(AgentError):
     """Raised internally when Gemini cannot be reached; callers fall back to a deterministic summary."""
+
+
+class GeminiRequestFailedError(GeminiUnavailableError):
+    """Raised by the model-fallback loop when the Gemini call failed: either every
+    configured model returned a retryable error, or one returned a non-retryable error.
+    Carries the per-model attempt log so callers can report which models were tried."""
+
+    def __init__(self, message: str, models_attempted: list[dict]):
+        super().__init__(message)
+        self.models_attempted = models_attempted
+
+
+class InvalidEligibilityResultError(AgentError):
+    """Raised by the Rejection Explanation Agent when its input is not a well-formed
+    Academic Eligibility Evaluation Agent result."""
